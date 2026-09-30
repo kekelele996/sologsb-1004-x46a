@@ -12,6 +12,12 @@ export interface Segment {
   label: string
   content: string
   locked: boolean
+  /** 译稿段落对齐的中文母版段落 id；母版段落本身无此字段 */
+  sourceSegmentId?: string
+  /** 母版已变更，该译稿段落失效、待复核 */
+  stale?: boolean
+  /** 母版已变更，但段落已定稿锁定，原文照旧保留（解锁时转入待复核） */
+  sourceUpdated?: boolean
 }
 
 export interface LanguageDraft {
@@ -24,6 +30,8 @@ export interface LanguageDraft {
   sources: string
   status: ScriptStatus
   segments: Segment[]
+  /** 接旧译稿时匹配不上、按语言留存的段落，可稍后手动对齐到母版 */
+  pendingSegments?: Segment[]
   updatedAt: string
 }
 

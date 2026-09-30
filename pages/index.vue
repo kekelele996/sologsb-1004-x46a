@@ -7,6 +7,8 @@ const activeTab = ref('editor')
 const device = ref<DeviceKind>('desktop')
 const versionDialog = ref(false)
 const versionName = ref('')
+const importDialog = ref(false)
+const importText = ref('')
 const leftFilter = ref('')
 const compareA = ref('')
 const compareB = ref('')
@@ -38,6 +40,16 @@ const diffLines = computed<DiffLine[]>(() => {
   const before = selectedVersionA.value?.draft.narration || ''
   const after = selectedVersionB.value?.draft.narration || ''
   return buildDiff(before, after)
+})
+const isMaster = computed(() => store.selectedLanguageId === 'zh')
+const masterSegments = computed(() => store.masterDraft?.segments || [])
+const staleCount = computed(() => draft.value?.segments.filter(item => item.stale).length || 0)
+const pendingSegments = computed(() => draft.value?.pendingSegments || [])
+/** 母版中还没有译文的段落 */
+const missingMasterSegments = computed(() => {
+  if (isMaster.value || !draft.value) return []
+  const aligned = new Set(draft.value.segments.map(item => item.sourceSegmentId))
+  return masterSegments.value.filter(item => !aligned.has(item.id))
 })
 
 onMounted(() => {
@@ -106,6 +118,28 @@ function formatTime(value: string) {
   return new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 function segmentLabel(segment: Segment) { return segment.label || '未命名段落' }
+function alignedMaster(segment: Segment) {
+  return masterSegments.value.find(item => item.id === segment.sourceSegmentId)
+}
+/** 母版某段落已对齐的某语言译稿段落数 */
+function coverageFor(masterId: string, languageId: string) {
+  const d = exhibit.value?.drafts.find(item => item.languageId === languageId)
+  return d?.segments.filter(item => item.sourceSegmentId === masterId).length || 0
+}
+function staleCountFor(languageId: string) {
+  const d = exhibit.value?.drafts.find(item => item.languageId === languageId)
+  return d?.segments.filter(item => item.stale).length || 0
+}
+function openImport() {
+  importText.value = ''
+  importDialog.value = true
+}
+function submitImport() {
+  if (store.importTranslations(store.selectedLanguageId, importText.value)) {
+    importDialog.value = false
+    importText.value = ''
+  }
+}
 </script>
 
 <template>
@@ -244,24 +278,116 @@ function segmentLabel(segment: Segment) { return segment.label || '未命名段�
                   </v-card>
 
                   <v-card class="script-card pa-4 pa-md-6 mt-5">
-                    <div class="d-flex align-center justify-space-between mb-4">
+                    <div class="d-flex align-center justify-space-between mb-4 flex-wrap ga-2">
                       <div>
                         <div class="section-title">分段校对</div>
-                        <div class="text-body-2 text-medium-emphasis mt-1">锁定段落不会被编辑；可在撤销中恢复。</div>
+                        <div class="text-body-2 text-medium-emphasis mt-1">
+                          <template v-if="isMaster">中文母版按段落维护；拆分或合并后，其他语言受影响段落自动回到待复核，已锁定段落保留。</template>
+                          <template v-else>译稿按段落对齐母版；母版改动后受影响段落标记待复核，已定稿锁定的段落原文保留。</template>
+                        </div>
                       </div>
-                      <v-chip variant="tonal">{{ draft.segments.filter(item => item.locked).length }}/{{ draft.segments.length }} 已锁定</v-chip>
+                      <div class="d-flex ga-2 align-center flex-wrap">
+                        <v-chip v-if="staleCount" color="warning" size="small" variant="tonal">{{ staleCount }} 段待复核</v-chip>
+                        <v-chip variant="tonal">{{ draft.segments.filter(item => item.locked).length }}/{{ draft.segments.length }} 已锁定</v-chip>
+                        <v-btn v-if="!isMaster" color="primary" variant="tonal" prepend-icon="mdi-import" size="small" @click="openImport">接入旧译稿</v-btn>
+                        <v-btn color="primary" variant="tonal" prepend-icon="mdi-plus" size="small" @click="store.addSegment">新增段落</v-btn>
+                      </div>
                     </div>
+
+                    <v-alert v-if="!isMaster && missingMasterSegments.length" type="info" variant="tonal" class="mb-4">
+                      母版有 {{ missingMasterSegments.length }} 个段落还没有译文：
+                      <v-chip v-for="m in missingMasterSegments" :key="m.id" size="x-small" class="ms-1">{{ m.label }}</v-chip>
+                    </v-alert>
+
                     <div class="d-flex flex-column ga-3">
-                      <div v-for="(segment, index) in draft.segments" :key="segment.id" class="segment-row" :class="{ locked: segment.locked }">
+                      <div v-for="(segment, index) in draft.segments" :key="segment.id" class="segment-row" :class="{ locked: segment.locked, stale: segment.stale }">
                         <div class="d-flex align-center ga-2">
                           <v-btn icon size="small" variant="text" :aria-label="segment.locked ? '解锁段落' : '锁定段落'" @click="store.toggleLock(segment.id)">
                             {{ segment.locked ? '🔒' : '🔓' }}
                           </v-btn>
                           <v-text-field :model-value="segment.label" density="compact" hide-details variant="plain" :readonly="segment.locked" :aria-label="`第 ${index + 1} 段标题`" @change="saveSegment(segment.id, 'label', $event)" />
-                          <v-chip v-if="segment.locked" color="success" size="small" variant="tonal">已确认</v-chip>
+                          <v-chip v-if="segment.stale" color="warning" size="small" variant="tonal">待复核</v-chip>
+                          <v-chip v-else-if="segment.locked" color="success" size="small" variant="tonal">已确认</v-chip>
+                          <v-chip v-if="!isMaster && segment.sourceUpdated && segment.locked" color="info" size="small" variant="tonal">母版已更新·锁定保留</v-chip>
+                          <template v-if="isMaster">
+                            <v-chip v-for="lang in LANGUAGES.filter(item => item.id !== 'zh')" :key="lang.id" size="x-small" variant="tonal" :color="coverageFor(segment.id, lang.id) ? 'success' : 'default'">
+                              {{ lang.shortLabel }} {{ coverageFor(segment.id, lang.id) }}
+                            </v-chip>
+                          </template>
+                          <v-spacer />
+                          <v-btn icon="mdi-content-cut" size="small" variant="text" :disabled="segment.locked" aria-label="拆分为两段" @click="store.splitSegment(segment.id)" />
+                          <v-btn icon="mdi-merge" size="small" variant="text" :disabled="segment.locked || index === draft.segments.length - 1" aria-label="与下一段合并" @click="store.mergeSegment(segment.id)" />
                           <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" :disabled="segment.locked" :aria-label="`删除第 ${index + 1} 段`" @click="deleteTarget = segment.id" />
                         </div>
+
+                        <div v-if="!isMaster" class="source-ref mt-2">
+                          <template v-if="alignedMaster(segment)">
+                            <div class="d-flex align-center ga-2 mb-1 flex-wrap">
+                              <v-chip size="x-small" color="primary" variant="outlined">母版段落</v-chip>
+                              <span class="text-caption text-medium-emphasis">{{ alignedMaster(segment)!.label }}</span>
+                              <v-spacer />
+                              <v-select
+                                :model-value="segment.sourceSegmentId"
+                                :items="masterSegments"
+                                item-title="label"
+                                item-value="id"
+                                density="compact"
+                                hide-details
+                                variant="plain"
+                                class="align-select"
+                                aria-label="本段对齐的母版段落"
+                                @update:model-value="(val: string) => store.realignSegment(segment.id, val)"
+                              />
+                            </div>
+                            <div class="text-body-2 text-medium-emphasis source-ref-text">{{ alignedMaster(segment)!.content }}</div>
+                          </template>
+                          <v-alert v-else type="warning" variant="tonal" density="compact" class="mb-0">
+                            本段未对齐母版（母版可能已拆分、合并或删除）。
+                            <v-select
+                              :model-value="segment.sourceSegmentId"
+                              :items="masterSegments"
+                              item-title="label"
+                              item-value="id"
+                              density="compact"
+                              hide-details
+                              class="mt-2"
+                              aria-label="本段对齐的母版段落"
+                              @update:model-value="(val: string) => store.realignSegment(segment.id, val)"
+                            />
+                          </v-alert>
+                        </div>
+
                         <v-textarea class="mt-2" :model-value="segment.content" rows="2" auto-grow hide-details :readonly="segment.locked" :aria-label="segmentLabel(segment)" @change="saveSegment(segment.id, 'content', $event)" />
+                      </div>
+                    </div>
+
+                    <div v-if="!isMaster && pendingSegments.length" class="pending-block mt-4">
+                      <div class="section-title mb-2">待匹配的旧译稿（{{ pendingSegments.length }} 段，按{{ currentLanguage?.label }}留存）</div>
+                      <div class="d-flex flex-column ga-3">
+                        <div v-for="(pending, pIndex) in pendingSegments" :key="pending.id" class="segment-row pending-row">
+                          <div class="d-flex align-center ga-2">
+                            <v-chip size="small" color="warning" variant="tonal">待匹配</v-chip>
+                            <v-text-field :model-value="pending.label" density="compact" hide-details variant="plain" readonly :aria-label="`待匹配段落 ${pIndex + 1} 标题`" />
+                            <v-spacer />
+                            <v-btn icon="mdi-delete-outline" size="small" variant="text" color="error" :aria-label="`删除待匹配段落 ${pIndex + 1}`" @click="store.removePending(pending.id)" />
+                          </div>
+                          <v-textarea class="mt-2" :model-value="pending.content" rows="2" auto-grow hide-details readonly :aria-label="pending.label" />
+                          <div class="d-flex align-center ga-2 mt-2 flex-wrap">
+                            <span class="text-caption text-medium-emphasis">对齐到母版段落：</span>
+                            <v-select
+                              :model-value="(null as string | null)"
+                              :items="masterSegments"
+                              item-title="label"
+                              item-value="id"
+                              density="compact"
+                              hide-details
+                              placeholder="选择母版段落"
+                              class="align-select"
+                              aria-label="待匹配段落对齐的母版段落"
+                              @update:model-value="(val: string) => store.alignPending(pending.id, val)"
+                            />
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </v-card>
@@ -278,6 +404,7 @@ function segmentLabel(segment: Segment) { return segment.label || '未命名段�
                         <div class="font-weight-medium">{{ lang.label }}</div>
                         <div class="text-caption text-medium-emphasis">
                           {{ exhibit?.drafts.find(item => item.languageId === lang.id) ? store.statusLabel(exhibit!.drafts.find(item => item.languageId === lang.id)!.status) : '尚未创建' }}
+                          <span v-if="staleCountFor(lang.id)" class="text-warning"> · {{ staleCountFor(lang.id) }} 段待复核</span>
                         </div>
                       </div>
                       <v-btn size="small" variant="text" :disabled="lang.id === store.selectedLanguageId" @click="store.selectLanguage(lang.id)">切换</v-btn>
@@ -368,9 +495,12 @@ function segmentLabel(segment: Segment) { return segment.label || '未命名段�
                   <v-card class="script-card pa-5">
                     <div class="section-title mb-3">段落锁定概况</div>
                     <v-timeline density="compact" side="end">
-                      <v-timeline-item v-for="segment in draft.segments" :key="segment.id" :dot-color="segment.locked ? 'success' : 'grey'" size="small">
-                        <div class="font-weight-medium">{{ segment.label }}</div>
-                        <div class="text-caption text-medium-emphasis">{{ segment.locked ? '已锁定，审校确认' : '编辑中' }}</div>
+                      <v-timeline-item v-for="segment in draft.segments" :key="segment.id" :dot-color="segment.stale ? 'warning' : segment.locked ? 'success' : 'grey'" size="small">
+                        <div class="font-weight-medium">
+                          {{ segment.label }}
+                          <v-chip v-if="segment.stale" size="x-small" color="warning" variant="tonal" class="ms-1">待复核</v-chip>
+                        </div>
+                        <div class="text-caption text-medium-emphasis">{{ segment.stale ? '母版已变更，待复核' : segment.locked ? '已锁定，审校确认' : '编辑中' }}</div>
                       </v-timeline-item>
                     </v-timeline>
                   </v-card>
@@ -391,6 +521,34 @@ function segmentLabel(segment: Segment) { return segment.label || '未命名段�
           <v-text-field v-model="versionName" label="版本名称（可选）" autofocus @keyup.enter="submitVersion" />
         </v-card-text>
         <v-card-actions><v-spacer /><v-btn @click="versionDialog = false">取消</v-btn><v-btn color="primary" @click="submitVersion">保存快照</v-btn></v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <v-dialog v-model="importDialog" max-width="580">
+      <v-card class="pa-3">
+        <v-card-title>接入旧译稿（{{ currentLanguage?.label }}）</v-card-title>
+        <v-card-text>
+          <p class="text-medium-emphasis mb-2">把旧译稿按段落粘贴进来（每段一行，或空行分段），系统按段落顺序对齐中文母版：</p>
+          <ul class="text-body-2 text-medium-emphasis mb-3 ps-4">
+            <li>能对齐的段落接入后标记为待复核，<b>不覆盖任何现有译文</b>；</li>
+            <li>接不上的段落按{{ currentLanguage?.label }}留存，可稍后在“待匹配”区手动对齐；</li>
+            <li>已锁定段落与已定稿内容不会被改动；接入出错会自动回滚。</li>
+          </ul>
+          <v-text-field
+            :model-value="`母版共 ${masterSegments.length} 段：${masterSegments.map((item, index) => `${index + 1}. ${item.label}`).join('；')}`"
+            readonly
+            density="compact"
+            hide-details
+            class="mb-3"
+            aria-label="母版段落顺序"
+          />
+          <v-textarea v-model="importText" rows="10" auto-grow placeholder="在此粘贴旧译稿段落……" aria-label="旧译稿文本" />
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer />
+          <v-btn @click="importDialog = false">取消</v-btn>
+          <v-btn color="primary" prepend-icon="mdi-import" @click="submitImport">接入并对齐</v-btn>
+        </v-card-actions>
       </v-card>
     </v-dialog>
 
