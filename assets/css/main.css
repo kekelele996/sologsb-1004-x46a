@@ -21,5 +21,29 @@ body { margin: 0; background: #f4f0e8; }
 .diff-add { background: #e7f5eb; color: #1f6338; }
 .diff-remove { background: #fdebea; color: #9b2c25; text-decoration: line-through; }
 .status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+.mono textarea { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; }
+
+/* 段落对齐板 */
+.align-board { border: 1px solid rgba(45,38,32,.12); border-radius: 14px; overflow: hidden; }
+.align-row { display: grid; grid-template-columns: 1.35fr 1fr 1fr; border-bottom: 1px solid rgba(45,38,32,.1); background: #fff; }
+.align-row:last-child { border-bottom: 0; }
+.align-head > div { padding: 10px 14px; background: #f6f1e7; font-size: .78rem; font-weight: 800; letter-spacing: .08em; color: #6f665d; }
+.align-master { padding: 14px 16px; border-right: 1px solid rgba(45,38,32,.1); background: #fffdf8; }
+.align-cell { padding: 12px; border-right: 1px solid rgba(45,38,32,.1); display: flex; flex-direction: column; gap: 10px; }
+.align-cell:last-child { border-right: 0; }
+.master-content { margin: 8px 0 0; line-height: 1.75; white-space: pre-wrap; }
+.tr-card { border: 1px solid rgba(45,38,32,.12); border-radius: 12px; padding: 10px 12px; background: #fff; }
+.tr-card.stale { border-color: #d9a441; background: #fdf7ea; }
+.tr-card.locked { border-color: #8ab09a; background: #f2f7f3; }
+.tr-card.kept { border-color: #d9a441; }
+.tr-label { font-size: .82rem; font-weight: 700; color: #4a4238; margin-bottom: 2px; }
+.tr-content { margin: 0 0 6px; font-size: .88rem; line-height: 1.65; white-space: pre-wrap; }
+.inbox-card .tr-card { background: #fff; }
+.seg-align-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 4px 0; border-top: 1px dashed rgba(45,38,32,.15); }
+@media (max-width: 960px) {
+  .align-row { grid-template-columns: 1fr; }
+  .align-master, .align-cell { border-right: 0; border-bottom: 1px solid rgba(45,38,32,.1); }
+  .align-head { display: none; }
+}
 :focus-visible { outline: 3px solid #d18b21 !important; outline-offset: 2px; }
 @media (max-width: 900px) { .desktop-only { display: none !important; } }
